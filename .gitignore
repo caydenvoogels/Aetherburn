@@ -1,0 +1,46 @@
+# Unreal Engine generated files
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+
+# Visual Studio / IDE generated files
+.vs/
+.vscode/
+.idea/
+*.sln
+*.slnx
+*.suo
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+
+# Rider generated files
+*.sln.iml
+
+# Compiled objects and build products
+*.dll
+*.exe
+*.exp
+*.ilk
+*.lib
+*.obj
+*.pdb
+*.pch
+
+# Unreal crash and profiling output
+*.log
+*.dmp
+*.tmp
+*.trace
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# User-specific local environment files
+.env
+.env.*
+!.env.example
