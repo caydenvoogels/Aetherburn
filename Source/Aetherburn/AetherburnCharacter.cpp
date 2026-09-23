@@ -35,14 +35,13 @@ AAetherburnCharacter::AAetherburnCharacter(const FObjectInitializer& ObjectIniti
 
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("Camera Boom"));
 	CameraBoom->SetupAttachment(GetCapsuleComponent());
-	CameraBoom->TargetArmLength = 420.0f;
+	// Keep the camera at eye level for the first-person Showcase view.
+	CameraBoom->TargetArmLength = 0.0f;
 	CameraBoom->SetRelativeLocation(FVector(0.0f, 0.0f, 58.0f));
-	CameraBoom->SocketOffset = FVector(0.0f, 55.0f, 5.0f);
+	CameraBoom->SocketOffset = FVector::ZeroVector;
 	CameraBoom->bUsePawnControlRotation = true;
-	CameraBoom->bEnableCameraLag = true;
-	CameraBoom->CameraLagSpeed = 14.0f;
-	CameraBoom->bEnableCameraRotationLag = true;
-	CameraBoom->CameraRotationLagSpeed = 18.0f;
+	CameraBoom->bEnableCameraLag = false;
+	CameraBoom->bEnableCameraRotationLag = false;
 
 	// Create the Camera Component
 	FirstPersonCameraComponent = CreateDefaultSubobject<UCameraComponent>(TEXT("First Person Camera"));
@@ -52,7 +51,7 @@ AAetherburnCharacter::AAetherburnCharacter(const FObjectInitializer& ObjectIniti
 
 	// configure the character comps
 	FirstPersonMesh->SetHiddenInGame(true);
-	GetMesh()->SetOwnerNoSee(false);
+	GetMesh()->SetOwnerNoSee(true);
 	GetMesh()->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::None);
 	GetMesh()->SetRelativeLocation(FVector::ZeroVector);
 	GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
@@ -124,7 +123,7 @@ void AAetherburnCharacter::BeginPlay()
 	FirstPersonMesh->SetVisibility(false, true);
 	GetMesh()->SetHiddenInGame(false);
 	GetMesh()->SetVisibility(true, true);
-	GetMesh()->SetOwnerNoSee(false);
+	GetMesh()->SetOwnerNoSee(true);
 	GetMesh()->SetOnlyOwnerSee(false);
 	GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, ThunderlordMeshVerticalOffset));
 	GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
@@ -132,8 +131,9 @@ void AAetherburnCharacter::BeginPlay()
 		CameraBoom,
 		FAttachmentTransformRules::SnapToTargetNotIncludingScale,
 		USpringArmComponent::SocketName);
-	CameraBoom->TargetArmLength = 420.0f;
+	CameraBoom->TargetArmLength = 0.0f;
 	CameraBoom->SetRelativeLocation(FVector(0.0f, 0.0f, 58.0f));
+	CameraBoom->SocketOffset = FVector::ZeroVector;
 	BaseCameraRelativeLocation = FirstPersonCameraComponent->GetRelativeLocation();
 	BaseBodyMeshRelativeLocation = GetMesh()->GetRelativeLocation();
 	BaseBodyMeshRelativeRotation = GetMesh()->GetRelativeRotation();

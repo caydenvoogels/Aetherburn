@@ -11,6 +11,7 @@ UCLASS()
 class AETHERBURN_API UThunderlordContentLibrary : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
+
 public:
 	UFUNCTION(BlueprintCallable, Category="Thunderlord|Editor")
 	static bool ConfigureBlendSpace(UBlendSpace* BlendSpace, const TArray<UAnimSequence*>& Clips, const TArray<FVector>& Coordinates, float MaximumSpeed);

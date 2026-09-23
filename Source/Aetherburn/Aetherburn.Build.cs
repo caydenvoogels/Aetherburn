@@ -12,6 +12,7 @@ public class Aetherburn : ModuleRules
 			"Core",
 			"CoreUObject",
 			"Engine",
+			"GameplayTags",
 			"InputCore",
 			"EnhancedInput",
 			"AnimGraphRuntime",

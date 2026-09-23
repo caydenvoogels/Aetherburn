@@ -10,5 +10,8 @@ AThunderlordGameMode::AThunderlordGameMode()
 	static ConstructorHelpers::FClassFinder<APawn> Player(TEXT("/Game/Thunderlord/Blueprints/BP_Thunderlord"));
 	if (Player.Succeeded()) DefaultPawnClass = Player.Class;
 	PlayerControllerClass = AAetherburnPlayerController::StaticClass();
+	static ConstructorHelpers::FClassFinder<APlayerController> ShowcaseController(
+		TEXT("/Game/Thunderlord/Blueprints/BP_AetherburnPlayerController"));
+	if (ShowcaseController.Succeeded()) PlayerControllerClass = ShowcaseController.Class;
 	HUDClass = AThunderlordHUD::StaticClass();
 }

@@ -8,6 +8,7 @@
 
 class UInputMappingContext;
 class UUserWidget;
+class AActor;
 
 /**
  *  Simple first person Player Controller
@@ -48,6 +49,11 @@ protected:
 
 	/** Gameplay initialization */
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	void RefreshAffiliationOutlines();
+	void ApplyAffiliationOutline(AActor* Actor) const;
+	void HandleActorSpawned(AActor* Actor);
+	FDelegateHandle ActorSpawnedHandle;
 
 	/** Input mapping context setup */
 	virtual void SetupInputComponent() override;
