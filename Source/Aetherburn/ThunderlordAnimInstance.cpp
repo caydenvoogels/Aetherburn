@@ -2,6 +2,7 @@
 #include "ThunderlordAnimationSet.h"
 #include "AetherburnCharacter.h"
 #include "Animation/AnimSequence.h"
+#include "Animation/AnimMontage.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -15,6 +16,15 @@ UThunderlordAnimInstance::UThunderlordAnimInstance()
 void UThunderlordAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 {
 	Super::NativeUpdateAnimation(DeltaSeconds);
+	const bool bThrowMontageActive = ActiveThrowMontage && Montage_IsPlaying(ActiveThrowMontage);
+	ThrowLayerWeight = FMath::FInterpTo(
+		ThrowLayerWeight, bThrowMontageActive ? 1.0f : 0.0f, DeltaSeconds, 18.0f);
+	if (!bThrowMontageActive && ThrowLayerWeight <= KINDA_SMALL_NUMBER)
+	{
+		ThrowLayerWeight = 0.0f;
+		ActiveThrowMontage = nullptr;
+	}
+
 	AAetherburnCharacter* Player = Cast<AAetherburnCharacter>(TryGetPawnOwner());
 	if (!Player || !Player->GetCharacterMovement())
 	{
@@ -86,3 +96,31 @@ bool UThunderlordAnimInstance::IsCrouchState() const { return MovementState == T
 bool UThunderlordAnimInstance::IsSlideState() const { return MovementState == TEXT("Slide"); }
 bool UThunderlordAnimInstance::IsJumpState() const { return MovementState == TEXT("Jump"); }
 bool UThunderlordAnimInstance::IsFallState() const { return MovementState == TEXT("Fall"); }
+
+float UThunderlordAnimInstance::PlayBoltThrowAnimation()
+{
+	UAnimSequence* ThrowClip = AnimationSet ? AnimationSet->Actions.FindRef(TEXT("Throw")) : nullptr;
+	if (!ThrowClip)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Thunderlord throw animation is missing from the animation set"));
+		return 0.0f;
+	}
+	const float SafePlayRate = FMath::Max(0.1f, ThrowPlayRate);
+	UAnimMontage* Montage = PlaySlotAnimationAsDynamicMontage(
+		ThrowClip, TEXT("UpperBodyThrow"), 0.06f, 0.12f, SafePlayRate, 1, -1.0f, 0.0f);
+	if (!Montage)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Could not start throw montage in slot UpperBodyThrow"));
+		return 0.0f;
+	}
+
+	const bool bMontagePlaying = Montage_IsPlaying(Montage);
+	ActiveThrowMontage = bMontagePlaying ? Montage : nullptr;
+	ThrowLayerWeight = bMontagePlaying ? 1.0f : 0.0f;
+	const float ReleaseDelay = ThrowClip->GetPlayLength() * ThrowReleaseFraction / SafePlayRate;
+	UE_LOG(LogTemp, Log,
+		TEXT("Thunderlord throw montage %s length=%.2f rate=%.2f release=%.2fs playing=%d layer=%.1f"),
+		*GetNameSafe(ThrowClip), ThrowClip->GetPlayLength(), SafePlayRate, ReleaseDelay,
+		bMontagePlaying, ThrowLayerWeight);
+	return ReleaseDelay;
+}

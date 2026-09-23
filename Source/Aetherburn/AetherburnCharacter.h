@@ -10,6 +10,10 @@
 class UInputComponent;
 class USkeletalMeshComponent;
 class USkeletalMesh;
+class UStaticMeshComponent;
+class UNiagaraComponent;
+class UNiagaraSystem;
+class AThunderlordBoltProjectile;
 class UCameraComponent;
 class USpringArmComponent;
 class UInputAction;
@@ -30,9 +34,13 @@ class AETHERBURN_API AAetherburnCharacter : public ACharacter
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
 	USkeletalMeshComponent* FirstPersonMesh;
 
-	/** First person camera */
+	/** Player camera used for the capsule-relative first-person view. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
 	UCameraComponent* FirstPersonCameraComponent;
+
+	/** Hyper locomotion's expected third-person camera target. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
+	UCameraComponent* ThirdPersonCameraComponent;
 
 	/** Third-person camera boom used by the 3D locomotion character. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
@@ -40,6 +48,29 @@ class AETHERBURN_API AAetherburnCharacter : public ACharacter
 
 	UPROPERTY()
 	TObjectPtr<USkeletalMesh> ThunderlordMeshAsset;
+
+	/** Zeus's bolt prop, attached to the character's right hand when that bone exists. */
+	UPROPERTY(VisibleAnywhere, Category="Thunderlord|Appearance")
+	TObjectPtr<UStaticMeshComponent> ThunderlordBolt;
+
+	/** Tesla-style arcs wrapped around the Zeus bolt. */
+	UPROPERTY(VisibleAnywhere, Category="Thunderlord|VFX")
+	TObjectPtr<UNiagaraComponent> ThunderlordBoltArcs;
+
+	UPROPERTY(EditDefaultsOnly, Category="Thunderlord|VFX")
+	TObjectPtr<UNiagaraSystem> ThunderlordBoltArcSystem;
+
+	/** Niagara effects used when the thrown bolt strikes a surface. */
+	UPROPERTY(EditDefaultsOnly, Category="Thunderlord|VFX")
+	TObjectPtr<UNiagaraSystem> ThunderlordBoltImpactSparks;
+	UPROPERTY(EditDefaultsOnly, Category="Thunderlord|VFX")
+	TObjectPtr<UNiagaraSystem> ThunderlordBoltImpactElectricity;
+
+	UPROPERTY(EditDefaultsOnly, Category="Thunderlord|Weapon")
+	TSubclassOf<AThunderlordBoltProjectile> ThunderlordBoltProjectileClass;
+
+	UPROPERTY(EditDefaultsOnly, Category="Thunderlord|VFX")
+	FVector ThunderlordBoltArcScale = FVector(1.0f, 0.0067f, 0.0067f);
 
 	UPROPERTY()
 	TSubclassOf<UAnimInstance> ThunderlordAnimClass;
@@ -106,6 +137,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Movement")
 	void StopSprint();
 
+	/** Begins a throw if the bolt is in hand and not already being thrown. */
+	UFUNCTION(BlueprintCallable, Category="Thunderlord|Weapon")
+	void ThrowThunderlordBolt();
+	/** Called at the authored release point in the throw animation. */
+	void ReleaseThunderlordBolt();
+	/** Called by the projectile after its impact effect has spawned. */
+	void OnThunderlordBoltImpact();
+	void SpawnThunderlordBoltImpact(const FVector& Location, const FVector& Normal);
+	UFUNCTION(BlueprintPure, Category="Thunderlord|Weapon")
+	bool IsThrowingBolt() const { return bIsThrowingBolt; }
+
 	/** Crouches, or begins a slide when moving quickly on the ground. */
 	UFUNCTION(BlueprintCallable, Category="Movement")
 	void StartCrouchOrSlide();
@@ -113,6 +155,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Movement")
 	void StopCrouchOrSlide();
 	void ToggleCrouch();
+	/** Switches between the third-person animation test view and the original first-person view. */
+	void ToggleCameraView();
 
 	UFUNCTION(BlueprintPure, Category="Movement")
 	bool IsSprinting() const { return bIsSprinting; }
@@ -209,6 +253,13 @@ protected:
 
 	UPROPERTY(BlueprintReadOnly, Category="Movement")
 	bool bIsSliding = false;
+	UPROPERTY(BlueprintReadOnly, Category="Thunderlord|Weapon")
+	bool bIsThrowingBolt = false;
+	bool bBoltInHand = true;
+	bool bIsThirdPersonCamera = true;
+	FName ThunderlordBoltHandBone = NAME_None;
+	FName ThunderlordHeadBone = NAME_None;
+	TArray<FName> FirstPersonHiddenBones;
 
 	bool bSprintHeld = false;
 	bool bCrouchHeld = false;
@@ -221,8 +272,9 @@ protected:
 	float LastSlideEndTime = -1000.0f;
 	float CrouchAnimationAlpha = 0.0f;
 	float SlideAnimationAlpha = 0.0f;
+	float BaseCapsuleHalfHeight = 96.0f;
+	FTimerHandle BoltThrowReleaseTimer;
 	FVector PreviousSlideLocation = FVector::ZeroVector;
-	FVector BaseCameraRelativeLocation = FVector::ZeroVector;
 	FVector BaseBodyMeshRelativeLocation = FVector::ZeroVector;
 	FRotator BaseBodyMeshRelativeRotation = FRotator::ZeroRotator;
 	

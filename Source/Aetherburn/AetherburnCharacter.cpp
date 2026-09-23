@@ -8,10 +8,19 @@
 #include "GameFramework/SpringArmComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/SkeletalMesh.h"
+#include "Engine/StaticMesh.h"
+#include "NiagaraComponent.h"
+#include "NiagaraSystem.h"
+#include "NiagaraFunctionLibrary.h"
+#include "ThunderlordBoltProjectile.h"
+#include "ThunderlordAnimInstance.h"
 #include "EnhancedInputComponent.h"
 #include "InputActionValue.h"
 #include "InputCoreTypes.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/Controller.h"
 #include "Aetherburn.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -33,21 +42,67 @@ AAetherburnCharacter::AAetherburnCharacter(const FObjectInitializer& ObjectIniti
 	FirstPersonMesh->FirstPersonPrimitiveType = EFirstPersonPrimitiveType::FirstPerson;
 	FirstPersonMesh->SetCollisionProfileName(FName("NoCollision"));
 
+	ThunderlordBolt = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Zeus Bolt"));
+	ThunderlordBolt->SetupAttachment(GetMesh());
+	ThunderlordBolt->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ThunderlordBolt->SetGenerateOverlapEvents(false);
+	ThunderlordBolt->SetRelativeScale3D(FVector::OneVector);
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> ZeusBoltMesh(
+		TEXT("/Game/Thunderlord/Zeus/Weapons/SM_ZeusBolt.SM_ZeusBolt"));
+	if (ZeusBoltMesh.Succeeded())
+	{
+		ThunderlordBolt->SetStaticMesh(ZeusBoltMesh.Object);
+	}
+	ThunderlordBoltArcs = CreateDefaultSubobject<UNiagaraComponent>(TEXT("Zeus Bolt Arcs"));
+	ThunderlordBoltArcs->SetupAttachment(ThunderlordBolt);
+	ThunderlordBoltArcs->SetAutoActivate(false);
+	ThunderlordBoltArcs->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	ThunderlordBoltArcs->SetGenerateOverlapEvents(false);
+	static ConstructorHelpers::FObjectFinder<UNiagaraSystem> ZeusBoltArcs(
+		TEXT("/Game/Thunderlord/Zeus/VFX/NS_ZeusBolt_ArcWrap.NS_ZeusBolt_ArcWrap"));
+	if (ZeusBoltArcs.Succeeded())
+	{
+		ThunderlordBoltArcSystem = ZeusBoltArcs.Object;
+	}
+	static ConstructorHelpers::FObjectFinder<UNiagaraSystem> BoltImpactSparks(
+		TEXT("/Game/NiagaraExamples/FX_Sparks/NS_Spark_Burst.NS_Spark_Burst"));
+	if (BoltImpactSparks.Succeeded()) ThunderlordBoltImpactSparks = BoltImpactSparks.Object;
+	static ConstructorHelpers::FObjectFinder<UNiagaraSystem> BoltImpactElectricity(
+		TEXT("/Game/NiagaraExamples/FX_Player/NS_Player_Electricity_Looping.NS_Player_Electricity_Looping"));
+	if (BoltImpactElectricity.Succeeded()) ThunderlordBoltImpactElectricity = BoltImpactElectricity.Object;
+	ThunderlordBoltProjectileClass = AThunderlordBoltProjectile::StaticClass();
+
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("Camera Boom"));
 	CameraBoom->SetupAttachment(GetCapsuleComponent());
-	// Keep the camera at eye level for the first-person Showcase view.
-	CameraBoom->TargetArmLength = 0.0f;
+	// Default to a shoulder camera so the throw pose is visible while testing.
+	CameraBoom->TargetArmLength = 360.0f;
 	CameraBoom->SetRelativeLocation(FVector(0.0f, 0.0f, 58.0f));
-	CameraBoom->SocketOffset = FVector::ZeroVector;
+	CameraBoom->SocketOffset = FVector(0.0f, 55.0f, 0.0f);
 	CameraBoom->bUsePawnControlRotation = true;
 	CameraBoom->bEnableCameraLag = false;
 	CameraBoom->bEnableCameraRotationLag = false;
+	// Keep the animation test view at a fixed distance instead of snapping in
+	// and out when the spring-arm probe crosses nearby level geometry.
+	CameraBoom->bDoCollisionTest = false;
 
 	// Create the Camera Component
 	FirstPersonCameraComponent = CreateDefaultSubobject<UCameraComponent>(TEXT("First Person Camera"));
 	FirstPersonCameraComponent->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
 	FirstPersonCameraComponent->bUsePawnControlRotation = false;
 	FirstPersonCameraComponent->FieldOfView = 80.0f;
+	FirstPersonCameraComponent->SetAutoActivate(false);
+	FirstPersonCameraComponent->ComponentTags.AddUnique(FName(TEXT("First Person Camera")));
+	FirstPersonCameraComponent->ComponentTags.AddUnique(FName(TEXT("FirstPersonCamera")));
+
+	// The Hyper Extended Movement Blueprint expects a distinct camera with this
+	// role. Keep it separate so its crouch timeline never dereferences a missing view.
+	ThirdPersonCameraComponent = CreateDefaultSubobject<UCameraComponent>(TEXT("Third Person Camera"));
+	ThirdPersonCameraComponent->SetupAttachment(CameraBoom, USpringArmComponent::SocketName);
+	ThirdPersonCameraComponent->bUsePawnControlRotation = false;
+	ThirdPersonCameraComponent->FieldOfView = 80.0f;
+	ThirdPersonCameraComponent->SetAutoActivate(false);
+	ThirdPersonCameraComponent->ComponentTags.AddUnique(FName(TEXT("Third Person Camera")));
+	ThirdPersonCameraComponent->ComponentTags.AddUnique(FName(TEXT("ThirdPersonCamera")));
 
 	// configure the character comps
 	FirstPersonMesh->SetHiddenInGame(true);
@@ -123,18 +178,225 @@ void AAetherburnCharacter::BeginPlay()
 	FirstPersonMesh->SetVisibility(false, true);
 	GetMesh()->SetHiddenInGame(false);
 	GetMesh()->SetVisibility(true, true);
-	GetMesh()->SetOwnerNoSee(true);
+	GetMesh()->SetOwnerNoSee(false);
 	GetMesh()->SetOnlyOwnerSee(false);
 	GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, ThunderlordMeshVerticalOffset));
 	GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
+	TArray<FName> ThunderlordBoneNames;
+	GetMesh()->GetBoneNames(ThunderlordBoneNames);
+	int32 HeadBoneIndex = INDEX_NONE;
+	for (const FName BoneName : ThunderlordBoneNames)
+	{
+		FString NormalizedName = BoneName.ToString().ToLower();
+		NormalizedName.ReplaceInline(TEXT("mixamorig:"), TEXT(""));
+		NormalizedName.ReplaceInline(TEXT("_"), TEXT(""));
+		if (NormalizedName == TEXT("head"))
+		{
+			ThunderlordHeadBone = BoneName;
+			HeadBoneIndex = GetMesh()->GetBoneIndex(ThunderlordHeadBone);
+			break;
+		}
+	}
+	if (HeadBoneIndex != INDEX_NONE && GetMesh()->GetSkeletalMeshAsset())
+	{
+		const FReferenceSkeleton& ReferenceSkeleton = GetMesh()->GetSkeletalMeshAsset()->GetRefSkeleton();
+		int32 FirstPersonCutoutRoot = HeadBoneIndex;
+		for (int32 ParentIndex = ReferenceSkeleton.GetParentIndex(HeadBoneIndex);
+			ParentIndex != INDEX_NONE; ParentIndex = ReferenceSkeleton.GetParentIndex(ParentIndex))
+		{
+			FString ParentName = ReferenceSkeleton.GetBoneName(ParentIndex).ToString().ToLower();
+			ParentName.ReplaceInline(TEXT("mixamorig:"), TEXT(""));
+			ParentName.ReplaceInline(TEXT("_"), TEXT(""));
+			if (ParentName.StartsWith(TEXT("neck")))
+			{
+				FirstPersonCutoutRoot = ParentIndex;
+				break;
+			}
+		}
+
+		for (int32 BoneIndex = 0; BoneIndex < ReferenceSkeleton.GetNum(); ++BoneIndex)
+		{
+			for (int32 ParentIndex = BoneIndex; ParentIndex != INDEX_NONE;
+				ParentIndex = ReferenceSkeleton.GetParentIndex(ParentIndex))
+			{
+				if (ParentIndex == FirstPersonCutoutRoot)
+				{
+					FirstPersonHiddenBones.Add(ReferenceSkeleton.GetBoneName(BoneIndex));
+					break;
+				}
+			}
+		}
+		for (const FName HiddenBone : FirstPersonHiddenBones)
+		{
+			GetMesh()->UnHideBoneByName(HiddenBone);
+		}
+		UE_LOG(LogAetherburn, Log, TEXT("First-person head cutout starts at %s and covers %d bones"),
+			*ReferenceSkeleton.GetBoneName(FirstPersonCutoutRoot).ToString(), FirstPersonHiddenBones.Num());
+	}
+	else
+	{
+		UE_LOG(LogAetherburn, Warning, TEXT("First-person head cutout could not find a Head bone on %s"),
+			*GetNameSafe(GetMesh()->GetSkeletalMeshAsset()));
+	}
+	if (ThunderlordBolt && ThunderlordBolt->GetStaticMesh())
+	{
+		const FName RightHandBoneCandidates[] = {
+			FName(TEXT("mixamorig:RightHand")),
+			FName(TEXT("RightHand")),
+			FName(TEXT("right_hand")),
+			FName(TEXT("hand_r")),
+			FName(TEXT("righthand"))
+		};
+		bool bAttachedToHand = false;
+		FName AttachedBone = NAME_None;
+		for (const FName BoneName : RightHandBoneCandidates)
+		{
+			if (GetMesh()->GetBoneIndex(BoneName) != INDEX_NONE)
+			{
+				AttachedBone = BoneName;
+				break;
+			}
+		}
+		if (AttachedBone.IsNone())
+		{
+			TArray<FName> BoneNames;
+			GetMesh()->GetBoneNames(BoneNames);
+			for (const FName BoneName : BoneNames)
+			{
+				FString NormalizedName = BoneName.ToString().ToLower();
+				NormalizedName.ReplaceInline(TEXT(":"), TEXT(""));
+				NormalizedName.ReplaceInline(TEXT("_"), TEXT(""));
+				if (NormalizedName == TEXT("righthand") || NormalizedName == TEXT("handr"))
+				{
+					AttachedBone = BoneName;
+					break;
+				}
+			}
+		}
+		if (!AttachedBone.IsNone())
+		{
+			ThunderlordBoltHandBone = AttachedBone;
+			ThunderlordBolt->AttachToComponent(
+				GetMesh(),
+				FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+				AttachedBone);
+			ThunderlordBolt->SetRelativeScale3D(FVector::OneVector);
+			bAttachedToHand = true;
+
+			const FReferenceSkeleton& ReferenceSkeleton = GetMesh()->GetSkeletalMeshAsset()->GetRefSkeleton();
+			const TArray<FMeshBoneInfo>& BoneInfo = ReferenceSkeleton.GetRefBoneInfo();
+			const TArray<FTransform>& ReferencePose = ReferenceSkeleton.GetRefBonePose();
+			const int32 HandBoneIndex = GetMesh()->GetBoneIndex(AttachedBone);
+			FVector FingerBaseOffset = FVector::ZeroVector;
+			FVector CentralFingerOffset = FVector::ZeroVector;
+			int32 FingerCount = 0;
+			int32 CentralFingerCount = 0;
+			for (int32 BoneIndex = 0; BoneIndex < BoneInfo.Num(); ++BoneIndex)
+			{
+				if (BoneInfo[BoneIndex].ParentIndex != HandBoneIndex)
+				{
+					continue;
+				}
+
+				FString ChildBoneName = BoneInfo[BoneIndex].Name.ToString().ToLower();
+				ChildBoneName.ReplaceInline(TEXT(":"), TEXT(""));
+				ChildBoneName.ReplaceInline(TEXT("_"), TEXT(""));
+				if (ChildBoneName.Contains(TEXT("thumb")))
+				{
+					continue;
+				}
+
+				const FVector ChildOffset = ReferencePose[BoneIndex].GetLocation();
+				if (ChildOffset.IsNearlyZero())
+				{
+					continue;
+				}
+
+				FingerBaseOffset += ChildOffset;
+				++FingerCount;
+				if (ChildBoneName.Contains(TEXT("index1")) || ChildBoneName.Contains(TEXT("middle1")))
+				{
+					CentralFingerOffset += ChildOffset;
+					++CentralFingerCount;
+				}
+			}
+
+			if (CentralFingerCount > 0)
+			{
+				FingerBaseOffset = CentralFingerOffset / CentralFingerCount;
+			}
+			else if (FingerCount > 0)
+			{
+				FingerBaseOffset /= FingerCount;
+			}
+
+			// The hand bone begins at the wrist; shift toward the finger roots so
+			// the center of the bolt sits in the palm, then out by half the hand
+			// thickness. The reference pose places the finger roots on local -Y,
+			// so local +Z is used as the palm-facing side.
+			constexpr float ZeusBoltHalfHandThickness = 2.5f;
+			// The bolt's long axis is local X, so roll it around that axis without
+			// tipping its length away from the top-to-bottom grip direction.
+			ThunderlordBolt->SetRelativeRotation(FRotator(0.0f, 0.0f, 90.0f));
+			ThunderlordBolt->SetRelativeLocation(
+				FingerBaseOffset * 0.65f + FVector(0.0f, 0.0f, ZeusBoltHalfHandThickness));
+			if (ThunderlordBoltArcs && ThunderlordBoltArcSystem)
+			{
+				const FBoxSphereBounds BoltBounds = ThunderlordBolt->GetStaticMesh()->GetBounds();
+				const FVector ArcEndOffset(BoltBounds.BoxExtent.X, 0.0f, 0.0f);
+				const FVector ArcStartLocal = BoltBounds.Origin - ArcEndOffset;
+				const FVector ArcEndLocal = BoltBounds.Origin + ArcEndOffset;
+				ThunderlordBoltArcs->SetAsset(ThunderlordBoltArcSystem);
+				// Start the Niagara system at the forward tip and target the rear tip.
+				// This reverses the bolt's arc direction while keeping both ends on the mesh.
+				ThunderlordBoltArcs->SetRelativeLocation(ArcEndLocal);
+				ThunderlordBoltArcs->SetRelativeRotation(FRotator::ZeroRotator);
+				ThunderlordBoltArcs->SetRelativeScale3D(ThunderlordBoltArcScale);
+				ThunderlordBoltArcs->SetVariableLinearColor(
+					FName(TEXT("User.Smoke Color")), FLinearColor(0.18f, 0.72f, 1.0f, 0.8f));
+				ThunderlordBoltArcs->SetVariablePosition(
+					FName(TEXT("User.PositionTarget")),
+					ThunderlordBolt->GetComponentTransform().TransformPosition(ArcStartLocal));
+				ThunderlordBoltArcs->Activate(true);
+			}
+			UE_LOG(LogAetherburn, Log, TEXT("Zeus bolt attached to %s with hand offset %s and grip rotation %s"), *AttachedBone.ToString(), *ThunderlordBolt->GetRelativeLocation().ToCompactString(), *ThunderlordBolt->GetRelativeRotation().ToCompactString());
+		}
+		if (!bAttachedToHand)
+		{
+			UE_LOG(LogAetherburn, Warning, TEXT("Zeus bolt was not attached: no recognized right-hand bone on %s"), *GetNameSafe(GetMesh()->GetSkeletalMeshAsset()));
+			ThunderlordBolt->SetHiddenInGame(true);
+			if (ThunderlordBoltArcs)
+			{
+				ThunderlordBoltArcs->SetHiddenInGame(true, true);
+			}
+		}
+	}
 	FirstPersonCameraComponent->AttachToComponent(
 		CameraBoom,
 		FAttachmentTransformRules::SnapToTargetNotIncludingScale,
 		USpringArmComponent::SocketName);
-	CameraBoom->TargetArmLength = 0.0f;
+	ThirdPersonCameraComponent->AttachToComponent(
+		CameraBoom,
+		FAttachmentTransformRules::SnapToTargetNotIncludingScale,
+		USpringArmComponent::SocketName);
+	CameraBoom->TargetArmLength = 360.0f;
 	CameraBoom->SetRelativeLocation(FVector(0.0f, 0.0f, 58.0f));
-	CameraBoom->SocketOffset = FVector::ZeroVector;
-	BaseCameraRelativeLocation = FirstPersonCameraComponent->GetRelativeLocation();
+	CameraBoom->SetRelativeRotation(FRotator::ZeroRotator);
+	CameraBoom->SocketOffset = FVector(0.0f, 55.0f, 0.0f);
+	CameraBoom->bUsePawnControlRotation = true;
+	CameraBoom->bInheritPitch = true;
+	CameraBoom->bInheritYaw = true;
+	CameraBoom->bInheritRoll = false;
+	CameraBoom->bEnableCameraLag = false;
+	CameraBoom->bEnableCameraRotationLag = false;
+	CameraBoom->bDoCollisionTest = false;
+	FirstPersonCameraComponent->bUsePawnControlRotation = false;
+	FirstPersonCameraComponent->Deactivate();
+	ThirdPersonCameraComponent->Activate(true);
+	bIsThirdPersonCamera = true;
+	UE_LOG(LogAetherburn, Log, TEXT("Thunderlord test camera initialized: third-person arm=%.0f control-rotation=%d collision=%d"),
+		CameraBoom->TargetArmLength, CameraBoom->bUsePawnControlRotation, CameraBoom->bDoCollisionTest);
+	BaseCapsuleHalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
 	BaseBodyMeshRelativeLocation = GetMesh()->GetRelativeLocation();
 	BaseBodyMeshRelativeRotation = GetMesh()->GetRelativeRotation();
 }
@@ -142,6 +404,17 @@ void AAetherburnCharacter::BeginPlay()
 void AAetherburnCharacter::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+	if (ThunderlordBoltArcs && ThunderlordBoltArcs->IsActive() && ThunderlordBolt)
+	{
+		if (UStaticMesh* BoltMesh = ThunderlordBolt->GetStaticMesh())
+		{
+			const FBoxSphereBounds BoltBounds = BoltMesh->GetBounds();
+			const FVector ArcStartLocal = BoltBounds.Origin - FVector(BoltBounds.BoxExtent.X, 0.0f, 0.0f);
+			ThunderlordBoltArcs->SetVariablePosition(
+				FName(TEXT("User.PositionTarget")),
+				ThunderlordBolt->GetComponentTransform().TransformPosition(ArcStartLocal));
+		}
+	}
 
 	if (bIsSliding)
 	{
@@ -163,7 +436,18 @@ void AAetherburnCharacter::Tick(float DeltaSeconds)
 	UpdateMovementState();
 	CrouchAnimationAlpha = FMath::FInterpTo(CrouchAnimationAlpha, bIsCrouched ? 1.0f : 0.0f, DeltaSeconds, PostureBlendSpeed);
 	SlideAnimationAlpha = FMath::FInterpTo(SlideAnimationAlpha, bIsSliding ? 1.0f : 0.0f, DeltaSeconds, PostureBlendSpeed);
-	FirstPersonCameraComponent->SetRelativeLocation(BaseCameraRelativeLocation - FVector(0, 0, 20 * CrouchAnimationAlpha + 15 * SlideAnimationAlpha));
+	if (!bIsThirdPersonCamera && CameraBoom)
+	{
+		// Place the first-person view from the capsule, not a facial bone. Crouching
+		// shrinks and lowers the capsule, so compensate for that shift before applying
+		// the desired posture drop. Sliding uses its own lower target height.
+		const float CapsuleHeightReduction = FMath::Max(
+			0.0f, BaseCapsuleHalfHeight - GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
+		const float PostureDrop = FMath::Max(
+			CrouchCameraDrop * CrouchAnimationAlpha,
+			SlideCameraDrop * SlideAnimationAlpha);
+		CameraBoom->SetRelativeLocation(FVector(8.0f, 0.0f, 82.0f + CapsuleHeightReduction - PostureDrop));
+	}
 	// ACharacter compensates the mesh when its capsule shrinks. Animation owns
 	// the posture; manually lowering the mesh here would bury its feet.
 }
@@ -197,6 +481,8 @@ void AAetherburnCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInpu
 	PlayerInputComponent->BindKey(EKeys::LeftControl, IE_Pressed, this, &AAetherburnCharacter::StartCrouchOrSlide);
 	PlayerInputComponent->BindKey(EKeys::LeftControl, IE_Released, this, &AAetherburnCharacter::StopCrouchOrSlide);
 	PlayerInputComponent->BindKey(EKeys::C, IE_Pressed, this, &AAetherburnCharacter::ToggleCrouch);
+	PlayerInputComponent->BindKey(EKeys::LeftMouseButton, IE_Pressed, this, &AAetherburnCharacter::ThrowThunderlordBolt);
+	PlayerInputComponent->BindKey(EKeys::V, IE_Pressed, this, &AAetherburnCharacter::ToggleCameraView);
 }
 
 
@@ -349,6 +635,133 @@ void AAetherburnCharacter::EndSlide()
 	}
 }
 
+void AAetherburnCharacter::ThrowThunderlordBolt()
+{
+	if (bIsThrowingBolt || !bBoltInHand || !ThunderlordBolt || !ThunderlordBoltProjectileClass || bIsSliding)
+	{
+		UE_LOG(LogAetherburn, Warning, TEXT("Bolt attack rejected: throwing=%d inHand=%d prop=%s projectileClass=%s sliding=%d crouched=%d"),
+			bIsThrowingBolt, bBoltInHand, *GetNameSafe(ThunderlordBolt),
+			*GetNameSafe(ThunderlordBoltProjectileClass.Get()), bIsSliding, bIsCrouched);
+		return;
+	}
+	bIsThrowingBolt = true;
+	UpdateMovementState();
+	UThunderlordAnimInstance* AnimInstance = Cast<UThunderlordAnimInstance>(GetMesh()->GetAnimInstance());
+	const float ReleaseDelay = AnimInstance ? AnimInstance->PlayBoltThrowAnimation() : 0.0f;
+	UE_LOG(LogAetherburn, Log, TEXT("Bolt attack accepted: animation=%s releaseDelay=%.2f"),
+		AnimInstance ? TEXT("Thunderlord") : TEXT("missing"), ReleaseDelay);
+	if (ReleaseDelay > 0.0f)
+	{
+		GetWorldTimerManager().SetTimer(BoltThrowReleaseTimer, this,
+			&AAetherburnCharacter::ReleaseThunderlordBolt, ReleaseDelay, false);
+	}
+	else
+	{
+		// Keep the player state valid if the throw animation has not been imported yet.
+		ReleaseThunderlordBolt();
+	}
+}
+
+void AAetherburnCharacter::ReleaseThunderlordBolt()
+{
+	if (!bIsThrowingBolt || !bBoltInHand || !GetWorld()) return;
+	bIsThrowingBolt = false;
+	bBoltInHand = false;
+	UpdateMovementState();
+	if (ThunderlordBoltArcs) ThunderlordBoltArcs->Deactivate();
+	ThunderlordBolt->SetHiddenInGame(true, true);
+
+	const UCameraComponent* ViewCamera = bIsThirdPersonCamera && ThirdPersonCameraComponent
+		? ThirdPersonCameraComponent : FirstPersonCameraComponent;
+	FVector ViewLocation = ViewCamera ? ViewCamera->GetComponentLocation() : GetActorLocation();
+	FRotator ViewRotation = ViewCamera ? ViewCamera->GetComponentRotation() : GetActorRotation();
+	if (GetController())
+	{
+		// Use the controller's actual aim rotation. A camera manager can still
+		// report a stale POV while the spring arm is changing views.
+		ViewRotation = GetController()->GetControlRotation();
+	}
+	FVector AimTarget = ViewLocation + ViewRotation.Vector() * 20000.0f;
+	FCollisionQueryParams AimQueryParams(SCENE_QUERY_STAT(ThunderlordBoltAim), true, this);
+	FHitResult AimHit;
+	if (GetWorld()->LineTraceSingleByChannel(AimHit, ViewLocation, AimTarget, ECC_Visibility, AimQueryParams))
+	{
+		AimTarget = AimHit.ImpactPoint;
+	}
+	FVector SpawnLocation = ThunderlordBolt->GetComponentLocation();
+	if (GetMesh() && !ThunderlordBoltHandBone.IsNone())
+	{
+		const FTransform HandWorld = GetMesh()->GetSocketTransform(ThunderlordBoltHandBone, RTS_World);
+		const FTransform BoltLocal = ThunderlordBolt->GetRelativeTransform();
+		SpawnLocation = HandWorld.TransformPosition(BoltLocal.GetLocation());
+	}
+	FVector AimDirection = (AimTarget - SpawnLocation).GetSafeNormal();
+	if (AimDirection.IsNearlyZero())
+	{
+		AimDirection = ViewRotation.Vector().GetSafeNormal();
+	}
+	// Move the projectile clear of the hand capsule so its first swept move
+	// cannot start embedded in the player or ground.
+	SpawnLocation += AimDirection * 28.0f;
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.Owner = this;
+	SpawnParameters.Instigator = this;
+	// Preserve the hand-based spawn point. Collision adjustment can otherwise
+	// relocate a spawn that overlaps the player's capsule toward the ground.
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	if (AThunderlordBoltProjectile* Projectile = GetWorld()->SpawnActor<AThunderlordBoltProjectile>(
+		ThunderlordBoltProjectileClass, SpawnLocation, AimDirection.Rotation(), SpawnParameters))
+	{
+		Projectile->Launch(AimDirection, 2600.0f);
+		UE_LOG(LogAetherburn, Log, TEXT("Bolt projectile launched from hand %s along %s (pitch %.1f) toward view target %s"),
+			*SpawnLocation.ToCompactString(), *AimDirection.ToCompactString(), ViewRotation.Pitch, *AimTarget.ToCompactString());
+	}
+	else
+	{
+		UE_LOG(LogAetherburn, Error, TEXT("Bolt projectile spawn failed at %s"), *SpawnLocation.ToCompactString());
+		bBoltInHand = true;
+		ThunderlordBolt->SetHiddenInGame(false, true);
+		if (ThunderlordBoltArcs) ThunderlordBoltArcs->Activate(true);
+	}
+}
+
+void AAetherburnCharacter::OnThunderlordBoltImpact()
+{
+	bBoltInHand = true;
+	if (ThunderlordBolt)
+	{
+		// The prop stays attached to its original hand bone while hidden in flight.
+		// Revealing it avoids reattaching with a stale transform at the character's feet.
+		ThunderlordBolt->SetHiddenInGame(false, true);
+	}
+	if (ThunderlordBoltArcs) ThunderlordBoltArcs->Activate(true);
+	UE_LOG(LogAetherburn, Log, TEXT("Bolt reclaimed to hand component at %s; ready to throw"),
+		ThunderlordBolt ? *ThunderlordBolt->GetComponentLocation().ToCompactString() : TEXT("missing"));
+}
+
+void AAetherburnCharacter::SpawnThunderlordBoltImpact(const FVector& Location, const FVector& Normal)
+{
+	if (!GetWorld()) return;
+	const FRotator ImpactRotation = Normal.ToOrientationRotator();
+	if (ThunderlordBoltImpactSparks)
+	{
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, ThunderlordBoltImpactSparks, Location, ImpactRotation);
+	}
+	if (ThunderlordBoltImpactElectricity)
+	{
+		UNiagaraComponent* Electricity = UNiagaraFunctionLibrary::SpawnSystemAtLocation(
+			this, ThunderlordBoltImpactElectricity, Location, ImpactRotation, FVector(0.7f), false, true, ENCPoolMethod::None, true);
+		if (Electricity)
+		{
+			FTimerHandle EffectTimer;
+			GetWorldTimerManager().SetTimer(EffectTimer, [Electricity]()
+			{
+				if (IsValid(Electricity)) Electricity->DestroyComponent();
+			}, 0.65f, false);
+		}
+	}
+}
+
 void AAetherburnCharacter::FinishSlideFromAnimation()
 {
 	EndSlide();
@@ -370,7 +783,7 @@ void AAetherburnCharacter::UpdateMovementState()
 
 	const FVector LocalVelocity = GetActorTransform().InverseTransformVectorNoScale(GetVelocity());
 	const bool bMovingForward = LocalVelocity.X > 10.0f;
-	bIsSprinting = bSprintHeld && !bIsSliding && !bIsCrouched && !bStaminaExhausted && Stamina > 0.0f && GetPlanarSpeed() > 10.0f && Movement->IsMovingOnGround();
+	bIsSprinting = bSprintHeld && !bIsSliding && !bIsCrouched && !bIsThrowingBolt && !bStaminaExhausted && Stamina > 0.0f && GetPlanarSpeed() > 10.0f && Movement->IsMovingOnGround();
 
 	if (bIsSliding)
 	{
@@ -382,7 +795,7 @@ void AAetherburnCharacter::UpdateMovementState()
 	}
 	else
 	{
-		Movement->MaxWalkSpeed = bIsSprinting ? MovementSprintSpeed : MovementWalkSpeed;
+		Movement->MaxWalkSpeed = bIsThrowingBolt ? MovementWalkSpeed : (bIsSprinting ? MovementSprintSpeed : MovementWalkSpeed);
 	}
 
 	Movement->MaxWalkSpeedCrouched = MovementCrouchSpeed;
@@ -407,4 +820,57 @@ void AAetherburnCharacter::ToggleCrouch()
 	StartCrouchOrSlide();
 	bCrouchHeld = WasHeld;
 	bCrouchToggled = !bIsSliding;
+}
+
+void AAetherburnCharacter::ToggleCameraView()
+{
+	if (!CameraBoom) return;
+	bIsThirdPersonCamera = !bIsThirdPersonCamera;
+	const bool bEnableThirdPerson = bIsThirdPersonCamera;
+	if (bEnableThirdPerson)
+	{
+		CameraBoom->AttachToComponent(
+			GetCapsuleComponent(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+		CameraBoom->TargetArmLength = 360.0f;
+		CameraBoom->SetRelativeLocation(FVector(0.0f, 0.0f, 58.0f));
+		CameraBoom->SocketOffset = FVector(0.0f, 55.0f, 0.0f);
+		FirstPersonCameraComponent->Deactivate();
+		ThirdPersonCameraComponent->Activate(true);
+	}
+	else
+	{
+		CameraBoom->AttachToComponent(
+			GetCapsuleComponent(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+		CameraBoom->TargetArmLength = 0.0f;
+		CameraBoom->SocketOffset = FVector::ZeroVector;
+		CameraBoom->SetRelativeLocation(FVector(8.0f, 0.0f, 82.0f));
+		ThirdPersonCameraComponent->Deactivate();
+		FirstPersonCameraComponent->Activate(true);
+	}
+	CameraBoom->SetRelativeRotation(FRotator::ZeroRotator);
+	CameraBoom->bUsePawnControlRotation = true;
+	CameraBoom->bDoCollisionTest = false;
+	// Keep the animated body visible from first person. Hide the neck/head subtree
+	// there so the camera does not sit inside the face or hair; restore it in third person.
+	GetMesh()->SetOwnerNoSee(false);
+	GetMesh()->SetOnlyOwnerSee(false);
+	if (!FirstPersonHiddenBones.IsEmpty())
+	{
+		if (bEnableThirdPerson)
+		{
+			for (const FName HiddenBone : FirstPersonHiddenBones)
+			{
+				GetMesh()->UnHideBoneByName(HiddenBone);
+			}
+		}
+		else
+		{
+			for (const FName HiddenBone : FirstPersonHiddenBones)
+			{
+				GetMesh()->HideBoneByName(HiddenBone, PBO_None);
+			}
+		}
+	}
+	UE_LOG(LogAetherburn, Log, TEXT("Camera view switched to %s (arm=%.0f)"),
+		bEnableThirdPerson ? TEXT("third-person") : TEXT("first-person"), CameraBoom->TargetArmLength);
 }

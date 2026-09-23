@@ -15,6 +15,7 @@ public class Aetherburn : ModuleRules
 			"GameplayTags",
 			"InputCore",
 			"EnhancedInput",
+			"Niagara",
 			"AnimGraphRuntime",
 			"AIModule",
 			"StateTreeModule",

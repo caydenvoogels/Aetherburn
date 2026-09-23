@@ -7,6 +7,7 @@
 #include "Animation/AnimData/IAnimationDataModel.h"
 #include "Animation/AnimData/IAnimationDataController.h"
 #include "Engine/SkeletalMesh.h"
+#include "Animation/Skeleton.h"
 #if WITH_EDITOR
 #include "Animation/AnimBlueprint.h"
 #include "AnimationGraph.h"
@@ -23,9 +24,12 @@
 #include "AnimGraphNode_StateResult.h"
 #include "AnimGraphNode_BlendSpacePlayer.h"
 #include "AnimGraphNode_SequencePlayer.h"
+#include "AnimGraphNode_Slot.h"
+#include "AnimGraphNode_LayeredBoneBlend.h"
 #include "AnimGraphNode_TransitionResult.h"
 #include "K2Node_CallFunction.h"
 #include "K2Node_VariableGet.h"
+#include "EdGraphSchema_K2.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "EdGraph/EdGraphPin.h"
@@ -277,6 +281,27 @@ bool UThunderlordContentLibrary::ConfigureAnimationBlueprint(UAnimBlueprint* Blu
 {
 #if WITH_EDITOR
 	if (!Blueprint || !Standing || !Crouch || !Slide || !Jump || !Fall) return false;
+	USkeleton* AnimSkeleton = Standing->GetSkeleton();
+	if (!AnimSkeleton) return false;
+	FName UpperBodyBlendBone = NAME_None;
+	const FReferenceSkeleton& ReferenceSkeleton = AnimSkeleton->GetReferenceSkeleton();
+	for (int32 BoneIndex = 0; BoneIndex < ReferenceSkeleton.GetNum(); ++BoneIndex)
+	{
+		FString NormalizedBoneName = ReferenceSkeleton.GetBoneName(BoneIndex).ToString().ToLower();
+		NormalizedBoneName.ReplaceInline(TEXT("mixamorig:"), TEXT(""));
+		NormalizedBoneName.ReplaceInline(TEXT("_"), TEXT(""));
+		if (NormalizedBoneName.StartsWith(TEXT("spine")))
+		{
+			UpperBodyBlendBone = ReferenceSkeleton.GetBoneName(BoneIndex);
+			break;
+		}
+	}
+	if (UpperBodyBlendBone.IsNone())
+	{
+		UE_LOG(LogTemp, Error, TEXT("Could not find a spine bone on skeleton %s for the Thunderlord throw layer"),
+			*GetNameSafe(AnimSkeleton));
+		return false;
+	}
 	TArray<UEdGraph*> AllGraphs;
 	Blueprint->GetAllGraphs(AllGraphs);
 	UAnimationGraph* AnimGraph = nullptr;
@@ -356,8 +381,55 @@ bool UThunderlordContentLibrary::ConfigureAnimationBlueprint(UAnimBlueprint* Blu
 		}
 	}
 	UEdGraphPin* MachineOutput = FindFirstPosePin(Machine, EGPD_Output);
+	UAnimGraphNode_Slot* ThrowSlot = AddGraphNode<UAnimGraphNode_Slot>(AnimGraph, FVector2D(100, 260));
+	UAnimGraphNode_LayeredBoneBlend* UpperBodyBlend = AddGraphNode<UAnimGraphNode_LayeredBoneBlend>(AnimGraph, FVector2D(420, 20));
+	UK2Node_VariableGet* ThrowLayerWeight = NewObject<UK2Node_VariableGet>(AnimGraph);
+	if (!MachineOutput || !ThrowSlot || !UpperBodyBlend || !ThrowLayerWeight) return false;
+	AnimGraph->AddNode(ThrowLayerWeight, true, false);
+	ThrowLayerWeight->CreateNewGuid();
+	ThrowLayerWeight->NodePosX = 120;
+	ThrowLayerWeight->NodePosY = 430;
+	ThrowLayerWeight->VariableReference.SetSelfMember(TEXT("ThrowLayerWeight"));
+	ThrowLayerWeight->AllocateDefaultPins();
+	ThrowSlot->Node.SlotName = TEXT("UpperBodyThrow");
+	ThrowSlot->Node.bAlwaysUpdateSourcePose = true;
+	UpperBodyBlend->Node.BlendMode = ELayeredBoneBlendMode::BranchFilter;
+	UpperBodyBlend->Node.LayerSetup.SetNum(1);
+	UpperBodyBlend->Node.LayerSetup[0].BranchFilters.AddDefaulted();
+	UpperBodyBlend->Node.LayerSetup[0].BranchFilters[0].BoneName = UpperBodyBlendBone;
+	UpperBodyBlend->Node.LayerSetup[0].BranchFilters[0].BlendDepth = 0;
+	UpperBodyBlend->Node.BlendWeights.SetNum(1);
+	UpperBodyBlend->Node.BlendWeights[0] = 1.0f;
+	UpperBodyBlend->ReconstructNode();
+	ThrowSlot->ReconstructNode();
+	TArray<UEdGraphPin*> LayeredPoseInputs;
+	for (UEdGraphPin* Pin : UpperBodyBlend->Pins)
+		if (Pin && Pin->Direction == EGPD_Input && Pin->PinType.PinCategory == UAnimationGraphSchema::PC_Struct)
+			LayeredPoseInputs.Add(Pin);
+	if (LayeredPoseInputs.Num() < 2) return false;
+	UEdGraphPin* SlotSource = FindFirstPosePin(ThrowSlot, EGPD_Input);
+	UEdGraphPin* SlotOutput = FindFirstPosePin(ThrowSlot, EGPD_Output);
+	UEdGraphPin* BlendOutput = FindFirstPosePin(UpperBodyBlend, EGPD_Output);
 	UEdGraphPin* RootInput = FindFirstPosePin(Root, EGPD_Input);
-	if (!ConnectPose(AnimGraph, MachineOutput, RootInput)) return false;
+	UEdGraphPin* BlendWeightInput = nullptr;
+	for (UEdGraphPin* Pin : UpperBodyBlend->Pins)
+	{
+		if (Pin && Pin->Direction == EGPD_Input && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Real)
+		{
+			BlendWeightInput = Pin;
+			break;
+		}
+	}
+	UEdGraphPin* ThrowLayerWeightOutput = FindPinByName(
+		ThrowLayerWeight, TEXT("ThrowLayerWeight"), EGPD_Output);
+	if (!ConnectPose(AnimGraph, MachineOutput, SlotSource) ||
+		!ConnectPose(AnimGraph, MachineOutput, LayeredPoseInputs[0]) ||
+		!ConnectPose(AnimGraph, SlotOutput, LayeredPoseInputs[1]) ||
+		!ConnectPose(AnimGraph, BlendOutput, RootInput) ||
+		!BlendWeightInput || !ThrowLayerWeightOutput ||
+		!AnimGraph->GetSchema()->TryCreateConnection(ThrowLayerWeightOutput, BlendWeightInput)) return false;
+	UE_LOG(LogTemp, Log, TEXT("Thunderlord throw slot UpperBodyThrow blends from skeleton bone %s"),
+		*UpperBodyBlendBone.ToString());
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 	FKismetEditorUtilities::CompileBlueprint(Blueprint);
 	return Blueprint->Status != BS_Error;
