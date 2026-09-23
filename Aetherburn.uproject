@@ -17,6 +17,28 @@
 	],
 	"Plugins": [
 		{
+			"Name": "PythonScriptPlugin",
+			"Enabled": true,
+			"TargetAllowList": [
+				"Editor"
+			]
+		},
+		{
+			"Name": "IKRig",
+			"Enabled": true
+		},
+		{
+			"Name": "meshy",
+			"Enabled": true,
+			"TargetAllowList": [
+				"Editor"
+			],
+			"SupportedTargetPlatforms": [
+				"Win64",
+				"Mac"
+			]
+		},
+		{
 			"Name": "CommonUI",
 			"Enabled": true
 		},

@@ -14,7 +14,7 @@ class UUserWidget;
  *  Manages the input mapping context.
  *  Overrides the Player Camera Manager class.
  */
-UCLASS(abstract, config="Game")
+UCLASS(config="Game")
 class AETHERBURN_API AAetherburnPlayerController : public APlayerController
 {
 	GENERATED_BODY()

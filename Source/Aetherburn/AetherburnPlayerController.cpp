@@ -9,11 +9,16 @@
 #include "Blueprint/UserWidget.h"
 #include "Aetherburn.h"
 #include "Widgets/Input/SVirtualJoystick.h"
+#include "UObject/ConstructorHelpers.h"
 
 AAetherburnPlayerController::AAetherburnPlayerController()
 {
 	// set the player camera manager class
 	PlayerCameraManagerClass = AAetherburnCameraManager::StaticClass();
+	static ConstructorHelpers::FObjectFinder<UInputMappingContext> DefaultContext(TEXT("/Game/Input/IMC_Default"));
+	static ConstructorHelpers::FObjectFinder<UInputMappingContext> MouseContext(TEXT("/Game/Input/IMC_MouseLook"));
+	if (DefaultContext.Succeeded()) DefaultMappingContexts.AddUnique(DefaultContext.Object);
+	if (MouseContext.Succeeded()) MobileExcludedMappingContexts.AddUnique(MouseContext.Object);
 }
 
 void AAetherburnPlayerController::BeginPlay()

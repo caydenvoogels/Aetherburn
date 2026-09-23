@@ -9,8 +9,11 @@
 
 class UInputComponent;
 class USkeletalMeshComponent;
+class USkeletalMesh;
 class UCameraComponent;
+class USpringArmComponent;
 class UInputAction;
+class UAnimInstance;
 struct FInputActionValue;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
@@ -18,8 +21,8 @@ DECLARE_LOG_CATEGORY_EXTERN(LogTemplateCharacter, Log, All);
 /**
  *  A basic first person character
  */
-UCLASS(abstract)
-class AAetherburnCharacter : public ACharacter
+UCLASS()
+class AETHERBURN_API AAetherburnCharacter : public ACharacter
 {
 	GENERATED_BODY()
 
@@ -30,6 +33,20 @@ class AAetherburnCharacter : public ACharacter
 	/** First person camera */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
 	UCameraComponent* FirstPersonCameraComponent;
+
+	/** Third-person camera boom used by the 3D locomotion character. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
+	USpringArmComponent* CameraBoom;
+
+	UPROPERTY()
+	TObjectPtr<USkeletalMesh> ThunderlordMeshAsset;
+
+	UPROPERTY()
+	TSubclassOf<UAnimInstance> ThunderlordAnimClass;
+
+	/** Per-character mesh adjustment; set only on the Thunderlord Blueprint. */
+	UPROPERTY(EditDefaultsOnly, Category="Thunderlord|Appearance")
+	float ThunderlordMeshVerticalOffset = 0.0f;
 
 protected:
 
@@ -50,7 +67,7 @@ protected:
 	class UInputAction* MouseLookAction;
 	
 public:
-	AAetherburnCharacter();
+	AAetherburnCharacter(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
 
@@ -78,6 +95,10 @@ protected:
 	UFUNCTION(BlueprintCallable, Category="Input")
 	virtual void DoJumpEnd();
 
+public:
+	UFUNCTION(BlueprintPure, Category="Movement")
+	float GetStaminaFraction() const { return Stamina / MaximumStamina; }
+	float GetSlideElapsed() const { return SlideElapsed; }
 	/** Starts and stops the high-speed locomotion state. */
 	UFUNCTION(BlueprintCallable, Category="Movement")
 	void StartSprint();
@@ -91,6 +112,7 @@ protected:
 
 	UFUNCTION(BlueprintCallable, Category="Movement")
 	void StopCrouchOrSlide();
+	void ToggleCrouch();
 
 	UFUNCTION(BlueprintPure, Category="Movement")
 	bool IsSprinting() const { return bIsSprinting; }
@@ -99,7 +121,12 @@ protected:
 	bool IsSliding() const { return bIsSliding; }
 
 	UFUNCTION(BlueprintPure, Category="Movement")
+	float GetSlideCooldownRemaining() const;
+
+	UFUNCTION(BlueprintPure, Category="Movement")
 	float GetPlanarSpeed() const;
+	/** Called by the animation instance when the one-shot slide clip finishes. */
+	void FinishSlideFromAnimation();
 
 	/** Normalized values intended for an Animation Blueprint or procedural camera rig. */
 	UFUNCTION(BlueprintPure, Category="Movement|Animation")
@@ -128,25 +155,39 @@ protected:
 	float MovementCrouchSpeed = 240.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Slide", meta=(ClampMin="0"))
-	float MinimumSlideSpeed = 520.0f;
+	float MinimumSlideSpeed = 600.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Slide", meta=(ClampMin="0"))
-	float SlideImpulse = 260.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Slide", meta=(ClampMin="0.1"))
-	float MaximumSlideDuration = 1.15f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Slide", meta=(ClampMin="100"))
-	float MaximumSlideDistance = 900.0f;
+	float SlideImpulse = 220.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Slide", meta=(ClampMin="0"))
-	float DownhillSlideAcceleration = 1250.0f;
+	float SlideCooldown = 1.1f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Slide", meta=(ClampMin="0"))
-	float UphillSlideBraking = 1900.0f;
+	float SlideDeceleration = 430.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Slide", meta=(ClampMin="0"))
+	float SlideExitSpeed = 230.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Stamina", meta=(ClampMin="1"))
+	float MaximumStamina = 4.0f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Stamina", meta=(ClampMin="0"))
+	float StaminaRecoveryPerSecond = 1.25f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Stamina", meta=(ClampMin="0"))
+	float StaminaRecoveryDelay = 0.8f;
+	float Stamina = 4.0f;
+	float RecoveryTime = 0.0f;
+	bool bStaminaExhausted = false;
+	bool bCrouchToggled = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Slide", meta=(ClampMin="0"))
+	float DownhillSlideAcceleration = 240.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Slide", meta=(ClampMin="0"))
+	float UphillSlideBraking = 1100.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Slide", meta=(ClampMin="0", ClampMax="1"))
-	float SlideSteeringStrength = 0.32f;
+	float SlideSteeringStrength = 0.18f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Animation", meta=(ClampMin="1"))
 	float PostureBlendSpeed = 12.0f;
@@ -174,12 +215,16 @@ protected:
 	float SlideElapsed = 0.0f;
 	float SavedGroundFriction = 8.0f;
 	float SavedBrakingDeceleration = 2048.0f;
+	float SavedMaxAcceleration = 2400.0f;
 	float SlideDistance = 0.0f;
 	float CurrentSlideSlopeDegrees = 0.0f;
+	float LastSlideEndTime = -1000.0f;
 	float CrouchAnimationAlpha = 0.0f;
 	float SlideAnimationAlpha = 0.0f;
 	FVector PreviousSlideLocation = FVector::ZeroVector;
 	FVector BaseCameraRelativeLocation = FVector::ZeroVector;
+	FVector BaseBodyMeshRelativeLocation = FVector::ZeroVector;
+	FRotator BaseBodyMeshRelativeRotation = FRotator::ZeroRotator;
 	
 
 public:

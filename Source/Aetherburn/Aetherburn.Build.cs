@@ -14,6 +14,7 @@ public class Aetherburn : ModuleRules
 			"Engine",
 			"InputCore",
 			"EnhancedInput",
+			"AnimGraphRuntime",
 			"AIModule",
 			"StateTreeModule",
 			"GameplayStateTreeModule",
@@ -22,6 +23,10 @@ public class Aetherburn : ModuleRules
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });
+		if (Target.bBuildEditor)
+		{
+			PrivateDependencyModuleNames.AddRange(new string[] { "AnimGraph", "BlueprintGraph", "UnrealEd" });
+		}
 
 		PublicIncludePaths.AddRange(new string[] {
 			"Aetherburn",
