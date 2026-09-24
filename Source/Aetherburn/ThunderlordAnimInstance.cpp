@@ -44,7 +44,8 @@ void UThunderlordAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 	{
 		const TObjectPtr<UAnimSequence> SlideClip = AnimationSet
 			? AnimationSet->Actions.FindRef(TEXT("Slide")) : nullptr;
-		SlideStateRemaining = SlideClip ? SlideClip->GetPlayLength() : 0.6f;
+		const float FullSlideLength = SlideClip ? SlideClip->GetPlayLength() : 0.6f;
+		SlideStateRemaining = FullSlideLength * Player->GetSlideAnimationEndFraction();
 	}
 	if (bSliding)
 	{

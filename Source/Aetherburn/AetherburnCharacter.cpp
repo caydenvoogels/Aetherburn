@@ -182,62 +182,6 @@ void AAetherburnCharacter::BeginPlay()
 	GetMesh()->SetOnlyOwnerSee(false);
 	GetMesh()->SetRelativeLocation(FVector(0.0f, 0.0f, ThunderlordMeshVerticalOffset));
 	GetMesh()->SetRelativeRotation(FRotator(0.0f, -90.0f, 0.0f));
-	TArray<FName> ThunderlordBoneNames;
-	GetMesh()->GetBoneNames(ThunderlordBoneNames);
-	int32 HeadBoneIndex = INDEX_NONE;
-	for (const FName BoneName : ThunderlordBoneNames)
-	{
-		FString NormalizedName = BoneName.ToString().ToLower();
-		NormalizedName.ReplaceInline(TEXT("mixamorig:"), TEXT(""));
-		NormalizedName.ReplaceInline(TEXT("_"), TEXT(""));
-		if (NormalizedName == TEXT("head"))
-		{
-			ThunderlordHeadBone = BoneName;
-			HeadBoneIndex = GetMesh()->GetBoneIndex(ThunderlordHeadBone);
-			break;
-		}
-	}
-	if (HeadBoneIndex != INDEX_NONE && GetMesh()->GetSkeletalMeshAsset())
-	{
-		const FReferenceSkeleton& ReferenceSkeleton = GetMesh()->GetSkeletalMeshAsset()->GetRefSkeleton();
-		int32 FirstPersonCutoutRoot = HeadBoneIndex;
-		for (int32 ParentIndex = ReferenceSkeleton.GetParentIndex(HeadBoneIndex);
-			ParentIndex != INDEX_NONE; ParentIndex = ReferenceSkeleton.GetParentIndex(ParentIndex))
-		{
-			FString ParentName = ReferenceSkeleton.GetBoneName(ParentIndex).ToString().ToLower();
-			ParentName.ReplaceInline(TEXT("mixamorig:"), TEXT(""));
-			ParentName.ReplaceInline(TEXT("_"), TEXT(""));
-			if (ParentName.StartsWith(TEXT("neck")))
-			{
-				FirstPersonCutoutRoot = ParentIndex;
-				break;
-			}
-		}
-
-		for (int32 BoneIndex = 0; BoneIndex < ReferenceSkeleton.GetNum(); ++BoneIndex)
-		{
-			for (int32 ParentIndex = BoneIndex; ParentIndex != INDEX_NONE;
-				ParentIndex = ReferenceSkeleton.GetParentIndex(ParentIndex))
-			{
-				if (ParentIndex == FirstPersonCutoutRoot)
-				{
-					FirstPersonHiddenBones.Add(ReferenceSkeleton.GetBoneName(BoneIndex));
-					break;
-				}
-			}
-		}
-		for (const FName HiddenBone : FirstPersonHiddenBones)
-		{
-			GetMesh()->UnHideBoneByName(HiddenBone);
-		}
-		UE_LOG(LogAetherburn, Log, TEXT("First-person head cutout starts at %s and covers %d bones"),
-			*ReferenceSkeleton.GetBoneName(FirstPersonCutoutRoot).ToString(), FirstPersonHiddenBones.Num());
-	}
-	else
-	{
-		UE_LOG(LogAetherburn, Warning, TEXT("First-person head cutout could not find a Head bone on %s"),
-			*GetNameSafe(GetMesh()->GetSkeletalMeshAsset()));
-	}
 	if (ThunderlordBolt && ThunderlordBolt->GetStaticMesh())
 	{
 		const FName RightHandBoneCandidates[] = {
@@ -434,8 +378,10 @@ void AAetherburnCharacter::Tick(float DeltaSeconds)
 		if (Stamina >= MaximumStamina * 0.3f) bStaminaExhausted = false;
 	}
 	UpdateMovementState();
-	CrouchAnimationAlpha = FMath::FInterpTo(CrouchAnimationAlpha, bIsCrouched ? 1.0f : 0.0f, DeltaSeconds, PostureBlendSpeed);
-	SlideAnimationAlpha = FMath::FInterpTo(SlideAnimationAlpha, bIsSliding ? 1.0f : 0.0f, DeltaSeconds, PostureBlendSpeed);
+	const float CrouchBlendSpeed = bIsCrouched ? PostureBlendSpeed : PostureRecoverySpeed;
+	const float SlideBlendSpeed = bIsSliding ? PostureBlendSpeed : PostureRecoverySpeed;
+	CrouchAnimationAlpha = FMath::FInterpTo(CrouchAnimationAlpha, bIsCrouched ? 1.0f : 0.0f, DeltaSeconds, CrouchBlendSpeed);
+	SlideAnimationAlpha = FMath::FInterpTo(SlideAnimationAlpha, bIsSliding ? 1.0f : 0.0f, DeltaSeconds, SlideBlendSpeed);
 	if (!bIsThirdPersonCamera && CameraBoom)
 	{
 		// Place the first-person view from the capsule, not a facial bone. Crouching
@@ -446,7 +392,7 @@ void AAetherburnCharacter::Tick(float DeltaSeconds)
 		const float PostureDrop = FMath::Max(
 			CrouchCameraDrop * CrouchAnimationAlpha,
 			SlideCameraDrop * SlideAnimationAlpha);
-		CameraBoom->SetRelativeLocation(FVector(8.0f, 0.0f, 82.0f + CapsuleHeightReduction - PostureDrop));
+		CameraBoom->SetRelativeLocation(FVector(24.0f, 0.0f, 82.0f + CapsuleHeightReduction - PostureDrop));
 	}
 	// ACharacter compensates the mesh when its capsule shrinks. Animation owns
 	// the posture; manually lowering the mesh here would bury its feet.
@@ -843,34 +789,17 @@ void AAetherburnCharacter::ToggleCameraView()
 			GetCapsuleComponent(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
 		CameraBoom->TargetArmLength = 0.0f;
 		CameraBoom->SocketOffset = FVector::ZeroVector;
-		CameraBoom->SetRelativeLocation(FVector(8.0f, 0.0f, 82.0f));
+		CameraBoom->SetRelativeLocation(FVector(24.0f, 0.0f, 82.0f));
 		ThirdPersonCameraComponent->Deactivate();
 		FirstPersonCameraComponent->Activate(true);
 	}
 	CameraBoom->SetRelativeRotation(FRotator::ZeroRotator);
 	CameraBoom->bUsePawnControlRotation = true;
 	CameraBoom->bDoCollisionTest = false;
-	// Keep the animated body visible from first person. Hide the neck/head subtree
-	// there so the camera does not sit inside the face or hair; restore it in third person.
+	// Keep the full character mesh visible in first person. Position the camera forward
+	// of the face instead of hiding head bones, so the head remains visible and casts shadows.
 	GetMesh()->SetOwnerNoSee(false);
 	GetMesh()->SetOnlyOwnerSee(false);
-	if (!FirstPersonHiddenBones.IsEmpty())
-	{
-		if (bEnableThirdPerson)
-		{
-			for (const FName HiddenBone : FirstPersonHiddenBones)
-			{
-				GetMesh()->UnHideBoneByName(HiddenBone);
-			}
-		}
-		else
-		{
-			for (const FName HiddenBone : FirstPersonHiddenBones)
-			{
-				GetMesh()->HideBoneByName(HiddenBone, PBO_None);
-			}
-		}
-	}
 	UE_LOG(LogAetherburn, Log, TEXT("Camera view switched to %s (arm=%.0f)"),
 		bEnableThirdPerson ? TEXT("third-person") : TEXT("first-person"), CameraBoom->TargetArmLength);
 }

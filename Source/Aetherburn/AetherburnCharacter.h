@@ -179,6 +179,9 @@ public:
 	UFUNCTION(BlueprintPure, Category="Movement|Animation")
 	float GetSlideAnimationAlpha() const { return SlideAnimationAlpha; }
 
+	UFUNCTION(BlueprintPure, Category="Movement|Animation")
+	float GetSlideAnimationEndFraction() const { return SlideAnimationEndFraction; }
+
 protected:
 
 	/** Set up input action bindings */
@@ -236,6 +239,12 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Animation", meta=(ClampMin="1"))
 	float PostureBlendSpeed = 12.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Animation", meta=(ClampMin="1"))
+	float PostureRecoverySpeed = 24.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Animation", meta=(ClampMin="0.5", ClampMax="1.0"))
+	float SlideAnimationEndFraction = 0.78f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Animation")
 	float CrouchCameraDrop = 28.0f;
 
@@ -258,8 +267,6 @@ protected:
 	bool bBoltInHand = true;
 	bool bIsThirdPersonCamera = true;
 	FName ThunderlordBoltHandBone = NAME_None;
-	FName ThunderlordHeadBone = NAME_None;
-	TArray<FName> FirstPersonHiddenBones;
 
 	bool bSprintHeld = false;
 	bool bCrouchHeld = false;
