@@ -21,6 +21,10 @@
 #include "InputCoreTypes.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
+#include "GameFramework/GameModeBase.h"
+#include "GameFramework/PlayerController.h"
+#include "Engine/DamageEvents.h"
+#include "ThunderlordHUD.h"
 #include "Aetherburn.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -41,6 +45,12 @@ AAetherburnCharacter::AAetherburnCharacter(const FObjectInitializer& ObjectIniti
 	FirstPersonMesh->SetOnlyOwnerSee(true);
 	FirstPersonMesh->FirstPersonPrimitiveType = EFirstPersonPrimitiveType::FirstPerson;
 	FirstPersonMesh->SetCollisionProfileName(FName("NoCollision"));
+
+	HeadshotCollider = CreateDefaultSubobject<UCapsuleComponent>(TEXT("Headshot Collider"));
+	HeadshotCollider->SetupAttachment(GetMesh());
+	HeadshotCollider->InitCapsuleSize(HeadshotColliderRadius, HeadshotColliderHalfHeight);
+	HeadshotCollider->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	HeadshotCollider->SetGenerateOverlapEvents(false);
 
 	ThunderlordBolt = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Zeus Bolt"));
 	ThunderlordBolt->SetupAttachment(GetMesh());
@@ -159,8 +169,13 @@ void AAetherburnCharacter::BeginPlay()
 {
 	Super::BeginPlay();
 	Stamina = MaximumStamina;
+	Health = MaximumHealth;
 	GetCharacterMovement()->NavAgentProps.bCanCrouch = true;
 	GetCharacterMovement()->SetCrouchedHalfHeight(52.0f);
+	if (bIsDamageDummy)
+	{
+		GetCharacterMovement()->DisableMovement();
+	}
 	GetCharacterMovement()->bOrientRotationToMovement = false;
 	bUseControllerRotationYaw = true;
 	GetMesh()->SetFirstPersonPrimitiveType(EFirstPersonPrimitiveType::None);
@@ -173,6 +188,50 @@ void AAetherburnCharacter::BeginPlay()
 	if (ThunderlordAnimClass)
 	{
 		GetMesh()->SetAnimInstanceClass(ThunderlordAnimClass);
+	}
+	// Anchor a compact projectile capsule to the actual animated head bone. This
+	// component is the only source of headshot classification, so Physics Asset
+	// body hits can never accidentally receive the headshot multiplier.
+	HeadshotBoneName = NAME_None;
+	TArray<FName> CharacterBoneNames;
+	GetMesh()->GetBoneNames(CharacterBoneNames);
+	for (const FName BoneName : CharacterBoneNames)
+	{
+		const FString BoneLabel = BoneName.ToString();
+		if (BoneLabel.EndsWith(TEXT("head"), ESearchCase::IgnoreCase))
+		{
+			HeadshotBoneName = BoneName;
+			break;
+		}
+	}
+	if (HeadshotCollider && !HeadshotBoneName.IsNone())
+	{
+		HeadshotCollider->AttachToComponent(GetMesh(),
+			FAttachmentTransformRules::SnapToTargetNotIncludingScale, HeadshotBoneName);
+		HeadshotCollider->SetRelativeLocation(HeadshotColliderOffset);
+		HeadshotCollider->SetRelativeRotation(FRotator::ZeroRotator);
+		HeadshotCollider->SetCapsuleSize(HeadshotColliderRadius, HeadshotColliderHalfHeight);
+		HeadshotCollider->SetCollisionObjectType(ECC_WorldDynamic);
+		HeadshotCollider->SetCollisionResponseToAllChannels(ECR_Ignore);
+		HeadshotCollider->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);
+		HeadshotCollider->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	}
+	else
+	{
+		UE_LOG(LogAetherburn, Warning, TEXT("%s has no head bone; dedicated headshot collider is disabled"), *GetName());
+	}
+	// Keep the capsule for character movement, but route Zeus projectile queries
+	// through the skeletal mesh's Physics Asset so hits follow the body shape.
+	if (GetMesh()->GetPhysicsAsset())
+	{
+		GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Ignore);
+		GetMesh()->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		GetMesh()->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);
+	}
+	else
+	{
+		UE_LOG(LogAetherburn, Warning, TEXT("%s has no Physics Asset; keeping the capsule as projectile fallback"), *GetName());
+		GetCapsuleComponent()->SetCollisionResponseToChannel(ECC_GameTraceChannel1, ECR_Block);
 	}
 	FirstPersonMesh->SetHiddenInGame(true);
 	FirstPersonMesh->SetVisibility(false, true);
@@ -573,6 +632,97 @@ void AAetherburnCharacter::EndSlide()
 	}
 }
 
+bool AAetherburnCharacter::IsHeadshotHitComponent(const UPrimitiveComponent* Component) const
+{
+	return HeadshotCollider && Component == HeadshotCollider;
+}
+
+float AAetherburnCharacter::TakeDamage(float DamageAmount, const FDamageEvent& DamageEvent,
+	AController* EventInstigator, AActor* DamageCauser)
+{
+	const float BaseDamage = Super::TakeDamage(DamageAmount, DamageEvent, EventInstigator, DamageCauser);
+	if (BaseDamage <= 0.0f || (bIsDead && !bIsDamageDummy))
+	{
+		return 0.0f;
+	}
+
+	const FPointDamageEvent* PointDamage = DamageEvent.IsOfType(FPointDamageEvent::ClassID)
+		? static_cast<const FPointDamageEvent*>(&DamageEvent) : nullptr;
+	const bool bHeadshot = PointDamage &&
+		PointDamage->HitInfo.BoneName.ToString().Contains(TEXT("head"), ESearchCase::IgnoreCase);
+	const bool bThunderlordHeadshot = bHeadshot && Cast<AThunderlordBoltProjectile>(DamageCauser);
+	const float AppliedDamage = bThunderlordHeadshot
+		? BaseDamage * ThunderlordHeadshotDamageMultiplier
+		: BaseDamage;
+	if (!bIsDead)
+	{
+		Health = FMath::Clamp(Health - AppliedDamage, 0.0f, MaximumHealth);
+	}
+	if (bIsDamageDummy)
+	{
+		if (AThunderlordHUD* ThunderlordHUD = Cast<AThunderlordHUD>(
+			GetWorld() && GetWorld()->GetFirstPlayerController()
+				? GetWorld()->GetFirstPlayerController()->GetHUD() : nullptr))
+		{
+			const FVector HitLocation = PointDamage ? FVector(PointDamage->HitInfo.ImpactPoint) : GetActorLocation();
+			ThunderlordHUD->ReportDummyDamage(AppliedDamage, HitLocation, bHeadshot);
+		}
+		if (Health <= 0.0f)
+		{
+			bIsDead = true;
+		}
+		return AppliedDamage;
+	}
+	if (Health <= 0.0f)
+	{
+		bIsDead = true;
+		bIsSprinting = false;
+		bSprintHeld = false;
+		bIsThrowingBolt = false;
+		GetWorldTimerManager().ClearTimer(BoltThrowReleaseTimer);
+		if (ThunderlordBoltArcs)
+		{
+			ThunderlordBoltArcs->Deactivate();
+		}
+		StopJumping();
+		GetCharacterMovement()->StopMovementImmediately();
+		GetCharacterMovement()->DisableMovement();
+		GetCapsuleComponent()->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		if (HeadshotCollider)
+		{
+			HeadshotCollider->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		}
+		DisableInput(nullptr);
+		GetMesh()->SetCollisionProfileName(FName(TEXT("Ragdoll")));
+		GetMesh()->SetSimulatePhysics(true);
+		GetMesh()->WakeAllRigidBodies();
+
+		if (AController* PlayerController = GetController(); PlayerController && PlayerController->IsPlayerController())
+		{
+			RespawnController = PlayerController;
+			UE_LOG(LogAetherburn, Log, TEXT("%s died; ragdolling and respawning in %.1f seconds"),
+				*GetName(), RespawnDelay);
+			GetWorldTimerManager().SetTimer(RespawnTimer, this,
+				&AAetherburnCharacter::RespawnPlayer, RespawnDelay, false);
+		}
+	}
+	return AppliedDamage;
+}
+
+void AAetherburnCharacter::RespawnPlayer()
+{
+	AController* PlayerController = RespawnController.Get();
+	if (PlayerController && GetWorld())
+	{
+		PlayerController->UnPossess();
+		if (AGameModeBase* GameMode = GetWorld()->GetAuthGameMode())
+		{
+			GameMode->RestartPlayer(PlayerController);
+		}
+	}
+	Destroy();
+}
+
 FVector AAetherburnCharacter::CalculateFirstPersonCameraBoomLocation() const
 {
 	const UCapsuleComponent* Capsule = GetCapsuleComponent();
@@ -638,10 +788,26 @@ void AAetherburnCharacter::ReleaseThunderlordBolt()
 		// report a stale POV while the spring arm is changing views.
 		ViewRotation = GetController()->GetControlRotation();
 	}
-	FVector AimTarget = ViewLocation + ViewRotation.Vector() * 20000.0f;
+	FVector AimRayOrigin = ViewLocation;
+	FVector AimRayDirection = ViewRotation.Vector();
+	if (APlayerController* PlayerController = Cast<APlayerController>(GetController()))
+	{
+		int32 ViewportWidth = 0;
+		int32 ViewportHeight = 0;
+		PlayerController->GetViewportSize(ViewportWidth, ViewportHeight);
+		FVector DeprojectedOrigin;
+		FVector DeprojectedDirection;
+		if (ViewportWidth > 0 && ViewportHeight > 0 && PlayerController->DeprojectScreenPositionToWorld(
+			ViewportWidth * 0.5f, ViewportHeight * 0.5f, DeprojectedOrigin, DeprojectedDirection))
+		{
+			AimRayOrigin = DeprojectedOrigin;
+			AimRayDirection = DeprojectedDirection.GetSafeNormal();
+		}
+	}
+	FVector AimTarget = AimRayOrigin + AimRayDirection * 20000.0f;
 	FCollisionQueryParams AimQueryParams(SCENE_QUERY_STAT(ThunderlordBoltAim), true, this);
 	FHitResult AimHit;
-	if (GetWorld()->LineTraceSingleByChannel(AimHit, ViewLocation, AimTarget, ECC_Visibility, AimQueryParams))
+	if (GetWorld()->LineTraceSingleByChannel(AimHit, AimRayOrigin, AimTarget, ECC_GameTraceChannel1, AimQueryParams))
 	{
 		AimTarget = AimHit.ImpactPoint;
 	}
@@ -669,7 +835,7 @@ void AAetherburnCharacter::ReleaseThunderlordBolt()
 	if (AThunderlordBoltProjectile* Projectile = GetWorld()->SpawnActor<AThunderlordBoltProjectile>(
 		ThunderlordBoltProjectileClass, SpawnLocation, AimDirection.Rotation(), SpawnParameters))
 	{
-		Projectile->Launch(AimDirection, 2600.0f);
+		Projectile->Launch(AimDirection, 3000.0f);
 		UE_LOG(LogAetherburn, Log, TEXT("Bolt projectile launched from hand %s along %s (pitch %.1f) toward view target %s"),
 			*SpawnLocation.ToCompactString(), *AimDirection.ToCompactString(), ViewRotation.Pitch, *AimTarget.ToCompactString());
 	}

@@ -8,7 +8,10 @@
 #include "AetherburnCharacter.generated.h"
 
 class UInputComponent;
+class AController;
 class USkeletalMeshComponent;
+class UCapsuleComponent;
+class UPrimitiveComponent;
 class USkeletalMesh;
 class UStaticMeshComponent;
 class UNiagaraComponent;
@@ -33,6 +36,10 @@ class AETHERBURN_API AAetherburnCharacter : public ACharacter
 	/** Pawn mesh: first person view (arms; seen only by self) */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
 	USkeletalMeshComponent* FirstPersonMesh;
+
+	/** Dedicated projectile hit volume for headshots, attached to the animated head bone. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UCapsuleComponent> HeadshotCollider;
 
 	/** Player camera used for the capsule-relative first-person view. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
@@ -79,6 +86,14 @@ class AETHERBURN_API AAetherburnCharacter : public ACharacter
 	UPROPERTY(EditDefaultsOnly, Category="Thunderlord|Appearance")
 	float ThunderlordMeshVerticalOffset = 0.0f;
 
+	/** Dimensions of the small, head-only projectile hit volume. */
+	UPROPERTY(EditDefaultsOnly, Category="Thunderlord|Combat|Headshots", meta=(ClampMin="1"))
+	float HeadshotColliderRadius = 11.0f;
+	UPROPERTY(EditDefaultsOnly, Category="Thunderlord|Combat|Headshots", meta=(ClampMin="1"))
+	float HeadshotColliderHalfHeight = 19.0f;
+	UPROPERTY(EditDefaultsOnly, Category="Thunderlord|Combat|Headshots")
+	FVector HeadshotColliderOffset = FVector(0.0f, 0.0f, 6.0f);
+
 protected:
 
 	/** Jump Input Action */
@@ -98,9 +113,14 @@ protected:
 	class UInputAction* MouseLookAction;
 	
 public:
+	static constexpr float ThunderlordHeadshotDamageMultiplier = 1.7f;
+	/** True only when the bolt struck the dedicated headshot capsule. */
+	bool IsHeadshotHitComponent(const UPrimitiveComponent* Component) const;
+	FName GetHeadshotBoneName() const { return HeadshotBoneName; }
 	AAetherburnCharacter(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
+	virtual float TakeDamage(float DamageAmount, FDamageEvent const& DamageEvent, AController* EventInstigator, AActor* DamageCauser) override;
 
 protected:
 
@@ -129,6 +149,14 @@ protected:
 public:
 	UFUNCTION(BlueprintPure, Category="Movement")
 	float GetStaminaFraction() const { return Stamina / MaximumStamina; }
+	UFUNCTION(BlueprintPure, Category="Health")
+	float GetHealthFraction() const { return MaximumHealth > 0.0f ? Health / MaximumHealth : 0.0f; }
+	UFUNCTION(BlueprintPure, Category="Health")
+	float GetHealth() const { return Health; }
+	UFUNCTION(BlueprintPure, Category="Health")
+	float GetMaximumHealth() const { return MaximumHealth; }
+	UFUNCTION(BlueprintPure, Category="Thunderlord|Weapon")
+	bool CanThrowThunderlordBolt() const { return bBoltInHand && !bIsThrowingBolt && !bIsDead; }
 	float GetSlideElapsed() const { return SlideElapsed; }
 	/** Starts and stops the high-speed locomotion state. */
 	UFUNCTION(BlueprintCallable, Category="Movement")
@@ -183,12 +211,22 @@ public:
 	float GetSlideAnimationEndFraction() const { return SlideAnimationEndFraction; }
 
 protected:
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Health", meta=(ClampMin="1"))
+	float MaximumHealth = 100.0f;
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Health")
+	float Health = 100.0f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Health|Training")
+	bool bIsDamageDummy = false;
+	bool bIsDead = false;
+	UPROPERTY(EditDefaultsOnly, Category="Health|Death", meta=(ClampMin="0.1", Units="s"))
+	float RespawnDelay = 3.0f;
 
 	/** Set up input action bindings */
 	virtual void SetupPlayerInputComponent(UInputComponent* InputComponent) override;
 
 	/** Restores the ordinary grounded movement settings after a slide. */
 	void EndSlide();
+	void RespawnPlayer();
 
 	void UpdateMovementState();
 
@@ -287,6 +325,8 @@ protected:
 	float SlideAnimationAlpha = 0.0f;
 	float BaseCapsuleHalfHeight = 96.0f;
 	FTimerHandle BoltThrowReleaseTimer;
+	FTimerHandle RespawnTimer;
+	TWeakObjectPtr<AController> RespawnController;
 	FVector PreviousSlideLocation = FVector::ZeroVector;
 	FVector BaseBodyMeshRelativeLocation = FVector::ZeroVector;
 	FRotator BaseBodyMeshRelativeRotation = FRotator::ZeroRotator;
@@ -299,9 +339,12 @@ public:
 
 	/** Returns first person camera component **/
 	UCameraComponent* GetFirstPersonCameraComponent() const { return FirstPersonCameraComponent; }
+	/** Returns the view camera used to aim the third-person bolt throw. */
+	UCameraComponent* GetThirdPersonCameraComponent() const { return ThirdPersonCameraComponent; }
 
 private:
 	FVector CalculateFirstPersonCameraBoomLocation() const;
+	FName HeadshotBoneName = NAME_None;
 
 };
 

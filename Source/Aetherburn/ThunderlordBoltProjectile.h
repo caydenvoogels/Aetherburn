@@ -16,6 +16,7 @@ class AETHERBURN_API AThunderlordBoltProjectile : public AActor
 public:
 	AThunderlordBoltProjectile();
 	void Launch(const FVector& Direction, float Speed);
+	virtual void Tick(float DeltaSeconds) override;
 
 protected:
 	virtual void BeginPlay() override;
@@ -32,5 +33,7 @@ private:
 	TObjectPtr<UStaticMeshComponent> BoltMesh;
 	UPROPERTY(VisibleAnywhere)
 	TObjectPtr<UProjectileMovementComponent> ProjectileMovement;
+	float TravelledDistance = 0.0f;
+	FVector PreviousLocation = FVector::ZeroVector;
 	bool bHasHit = false;
 };
