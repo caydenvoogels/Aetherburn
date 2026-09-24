@@ -384,19 +384,7 @@ void AAetherburnCharacter::Tick(float DeltaSeconds)
 	SlideAnimationAlpha = FMath::FInterpTo(SlideAnimationAlpha, bIsSliding ? 1.0f : 0.0f, DeltaSeconds, SlideBlendSpeed);
 	if (!bIsThirdPersonCamera && CameraBoom)
 	{
-		// Place the first-person view from the capsule, not a facial bone. Crouching
-		// shrinks and lowers the capsule, so compensate for that shift before applying
-		// the desired posture drop. Sliding uses its own lower target height.
-		const float CapsuleHeightReduction = FMath::Max(
-			0.0f, BaseCapsuleHalfHeight - GetCapsuleComponent()->GetScaledCapsuleHalfHeight());
-		const float PostureDrop = FMath::Max(
-			CrouchCameraDrop * CrouchAnimationAlpha,
-			SlideCameraDrop * SlideAnimationAlpha);
-		const float PostureForward = FMath::Max(
-			CrouchCameraForward * CrouchAnimationAlpha,
-			SlideCameraForward * SlideAnimationAlpha);
-		CameraBoom->SetRelativeLocation(FVector(24.0f + PostureForward, 0.0f,
-			82.0f + CapsuleHeightReduction - PostureDrop));
+		CameraBoom->SetRelativeLocation(CalculateFirstPersonCameraBoomLocation());
 	}
 	// ACharacter compensates the mesh when its capsule shrinks. Animation owns
 	// the posture; manually lowering the mesh here would bury its feet.
@@ -583,6 +571,25 @@ void AAetherburnCharacter::EndSlide()
 	{
 		UnCrouch();
 	}
+}
+
+FVector AAetherburnCharacter::CalculateFirstPersonCameraBoomLocation() const
+{
+	const UCapsuleComponent* Capsule = GetCapsuleComponent();
+	const float CapsuleHeightReduction = Capsule
+		? FMath::Max(0.0f, BaseCapsuleHalfHeight - Capsule->GetScaledCapsuleHalfHeight())
+		: 0.0f;
+	const float PostureDrop = FMath::Max(
+		CrouchCameraDrop * CrouchAnimationAlpha,
+		SlideCameraDrop * SlideAnimationAlpha);
+	const float PostureForward = FMath::Max(
+		CrouchCameraForward * CrouchAnimationAlpha,
+		SlideCameraForward * SlideAnimationAlpha);
+	const float CapsuleFront = Capsule ? Capsule->GetScaledCapsuleRadius() : 34.0f;
+
+	// Put the view in front of the capsule and keep the character mesh visible.
+	return FVector(CapsuleFront + FirstPersonCameraForwardClearance + PostureForward,
+		0.0f, 82.0f + CapsuleHeightReduction - PostureDrop);
 }
 
 void AAetherburnCharacter::ThrowThunderlordBolt()
@@ -793,7 +800,7 @@ void AAetherburnCharacter::ToggleCameraView()
 			GetCapsuleComponent(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
 		CameraBoom->TargetArmLength = 0.0f;
 		CameraBoom->SocketOffset = FVector::ZeroVector;
-		CameraBoom->SetRelativeLocation(FVector(24.0f, 0.0f, 82.0f));
+		CameraBoom->SetRelativeLocation(CalculateFirstPersonCameraBoomLocation());
 		ThirdPersonCameraComponent->Deactivate();
 		FirstPersonCameraComponent->Activate(true);
 	}

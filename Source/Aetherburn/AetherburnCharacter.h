@@ -251,6 +251,9 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Animation", meta=(ClampMin="0"))
 	float CrouchCameraForward = 8.0f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Animation", meta=(ClampMin="0"))
+	float FirstPersonCameraForwardClearance = 8.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Animation")
 	float SlideCameraDrop = 44.0f;
 
@@ -296,6 +299,9 @@ public:
 
 	/** Returns first person camera component **/
 	UCameraComponent* GetFirstPersonCameraComponent() const { return FirstPersonCameraComponent; }
+
+private:
+	FVector CalculateFirstPersonCameraBoomLocation() const;
 
 };
 
