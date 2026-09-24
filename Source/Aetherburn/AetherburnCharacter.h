@@ -243,10 +243,13 @@ protected:
 	float PostureRecoverySpeed = 24.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Animation", meta=(ClampMin="0.5", ClampMax="1.0"))
-	float SlideAnimationEndFraction = 0.78f;
+	float SlideAnimationEndFraction = 0.72f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Animation")
-	float CrouchCameraDrop = 28.0f;
+	float CrouchCameraDrop = 36.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Animation", meta=(ClampMin="0"))
+	float CrouchCameraForward = 8.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Movement|Animation")
 	float SlideCameraDrop = 44.0f;

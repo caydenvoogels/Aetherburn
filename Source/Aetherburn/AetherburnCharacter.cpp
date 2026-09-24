@@ -392,7 +392,11 @@ void AAetherburnCharacter::Tick(float DeltaSeconds)
 		const float PostureDrop = FMath::Max(
 			CrouchCameraDrop * CrouchAnimationAlpha,
 			SlideCameraDrop * SlideAnimationAlpha);
-		CameraBoom->SetRelativeLocation(FVector(24.0f, 0.0f, 82.0f + CapsuleHeightReduction - PostureDrop));
+		const float PostureForward = FMath::Max(
+			CrouchCameraForward * CrouchAnimationAlpha,
+			SlideCameraForward * SlideAnimationAlpha);
+		CameraBoom->SetRelativeLocation(FVector(24.0f + PostureForward, 0.0f,
+			82.0f + CapsuleHeightReduction - PostureDrop));
 	}
 	// ACharacter compensates the mesh when its capsule shrinks. Animation owns
 	// the posture; manually lowering the mesh here would bury its feet.
